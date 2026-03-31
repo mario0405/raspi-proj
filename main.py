@@ -53,11 +53,14 @@ INFERENCE_INTERVAL_SECONDS = float(os.getenv("INFERENCE_INTERVAL_SECONDS", "0.35
 NIGHT_SLEEP_SECONDS = int(os.getenv("NIGHT_SLEEP_SECONDS", "60"))
 CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
 CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "480"))
+SAVE_TRIGGER_SNAPSHOTS = os.getenv("SAVE_TRIGGER_SNAPSHOTS", "true").lower() == "true"
+SNAPSHOT_JPEG_QUALITY = int(os.getenv("SNAPSHOT_JPEG_QUALITY", "85"))
 
 # File paths inside the container.
 MODEL_PATH = Path(os.getenv("MODEL_PATH", "/app/models/detect.tflite"))
 LABELS_PATH = Path(os.getenv("LABELS_PATH", "/app/models/labelmap.txt"))
 SCARE_SOUND_PATH = Path(os.getenv("SCARE_SOUND_PATH", "/app/assets/scare_sound.wav"))
+SNAPSHOT_DIR = Path(os.getenv("SNAPSHOT_DIR", "/app/snapshots"))
 
 # Optional ALSA device override for USB audio adapter, for example: "plughw:1,0".
 ALSA_DEVICE = os.getenv("ALSA_DEVICE", "").strip()
@@ -306,6 +309,35 @@ def play_deterrent_sound(sound_path: Path, alsa_device: str) -> bool:
         return False
 
 
+def save_trigger_snapshot(
+    frame_rgb: np.ndarray,
+    snapshot_dir: Path,
+    score: float,
+    class_name: str,
+    jpeg_quality: int,
+) -> Path | None:
+    """Save a JPEG snapshot for later review when a trigger event occurs."""
+    try:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        score_pct = int(score * 100)
+        safe_class = class_name.replace(" ", "_").replace("/", "_")
+        filename = f"trigger_{ts}_{safe_class}_{score_pct:02d}.jpg"
+        out_path = snapshot_dir / filename
+
+        Image.fromarray(frame_rgb).save(
+            out_path,
+            format="JPEG",
+            quality=max(20, min(jpeg_quality, 95)),
+            optimize=True,
+        )
+        return out_path
+    except Exception as exc:  # noqa: BLE001 - snapshot failure must not crash service
+        print(f"[snapshot][error] Failed to save trigger snapshot: {exc}")
+        return None
+
+
 def main() -> None:
     """Main execution loop."""
     signal.signal(signal.SIGTERM, handle_signal)
@@ -325,6 +357,12 @@ def main() -> None:
         f"threshold={CONFIDENCE_THRESHOLD:.2f} | "
         f"cooldown={COOLDOWN_SECONDS}s | "
         f"interval={INFERENCE_INTERVAL_SECONDS}s"
+    )
+    print(
+        "[boot] Snapshot config | "
+        f"enabled={SAVE_TRIGGER_SNAPSHOTS} | "
+        f"dir={SNAPSHOT_DIR} | "
+        f"jpeg_quality={SNAPSHOT_JPEG_QUALITY}"
     )
 
     labels = load_labels(LABELS_PATH)
@@ -382,6 +420,17 @@ def main() -> None:
             if not in_cooldown:
                 played = play_deterrent_sound(SCARE_SOUND_PATH, ALSA_DEVICE)
                 if played:
+                    if SAVE_TRIGGER_SNAPSHOTS:
+                        snap = save_trigger_snapshot(
+                            frame_rgb=frame,
+                            snapshot_dir=SNAPSHOT_DIR,
+                            score=score,
+                            class_name=class_name,
+                            jpeg_quality=SNAPSHOT_JPEG_QUALITY,
+                        )
+                        if snap is not None:
+                            print(f"[snapshot] Saved trigger snapshot: {snap}")
+
                     next_allowed_trigger_ts = time.time() + COOLDOWN_SECONDS
                     print(f"[cooldown] Audio triggered. Cooling down for {COOLDOWN_SECONDS}s.")
 

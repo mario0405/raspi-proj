@@ -19,6 +19,7 @@ services:
       - /run/udev:/run/udev:ro
       - ./models:/app/models:ro
       - ./assets:/app/assets:ro
+      - ./snapshots:/app/snapshots
 
     environment:
       # Basel, Switzerland (Claragraben 105 area)
@@ -40,6 +41,9 @@ services:
       MODEL_PATH: /app/models/detect.tflite
       LABELS_PATH: /app/models/labelmap.txt
       SCARE_SOUND_PATH: /app/assets/scare_sound.wav
+      SNAPSHOT_DIR: /app/snapshots
+      SAVE_TRIGGER_SNAPSHOTS: "true"
+      SNAPSHOT_JPEG_QUALITY: "85"
 
       # Optional: set to your USB sound card explicitly, example: plughw:1,0
       ALSA_DEVICE: ""
